@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+!DOCTYPE html>
 <html lang="en" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
@@ -544,7 +544,15 @@
         ];
 
         async function initializeAppEngine() {
-            let firebaseConfig = null;
+            const firebaseConfig = {
+  apiKey: "AIzaSyB1O9fx_FVOtOGMfYzDrwoDv8dbIRD3rbY",
+  authDomain: "dbportal-42357.firebaseapp.com",
+  projectId: "dbportal-42357",
+  storageBucket: "dbportal-42357.firebasestorage.app",
+  messagingSenderId: "61634029060",
+  appId: "1:61634029060:web:ec3947deb7183ef5157751",
+  measurementId: "G-3XHG3DMZB4"
+};
             let initialAuthToken = null;
 
             if (typeof __app_id !== 'undefined') {
@@ -633,17 +641,29 @@
                     updateStatsCounters();
                 }
             }, (error) => {
-                console.error("Firestore onSnapshot error:", error);
-                showToast("Error fetching cloud catalog status.", "error");
-                if (items.length === 0) loadLocalDataBackup();
+                console.warn("Firestore error or permissions restricted. Falling back gracefully to offline storage.", error);
+                
+                // If permission-denied is thrown, set active state to offline to let user proceed
+                if (error.code === 'permission-denied' || error.message.includes('permission')) {
+                    isFirebaseConnected = false;
+                    showToast("Cloud restricted. Switched to secure offline database.", "info");
+                } else {
+                    showToast("Error synchronizing with cloud database.", "error");
+                }
+                
+                loadLocalDataBackup();
             });
         }
 
         async function seedDefaultDataToFirestore(colRef) {
-            for (let item of defaultMockData) {
-                const cleanItem = { ...item };
-                delete cleanItem.id;
-                await addDoc(colRef, cleanItem);
+            try {
+                for (let item of defaultMockData) {
+                    const cleanItem = { ...item };
+                    delete cleanItem.id;
+                    await addDoc(colRef, cleanItem);
+                }
+            } catch (err) {
+                console.warn("Could not seed data to Firestore due to permission boundaries:", err);
             }
         }
 
@@ -841,7 +861,8 @@
                 renderCatalog();
                 updateStatsCounters();
             } catch (err) {
-                console.warn("Could not save the updated views metric:", err);
+                console.warn("Could not save the updated views metric to cloud:", err);
+                saveLocalDataBackup();
             }
 
             const modal = document.getElementById('viewer-modal');
@@ -1065,8 +1086,12 @@
                         showToast("Resource removed from local storage.", "info");
                     }
                 } catch (error) {
-                    console.error("Delete failed:", error);
-                    showToast("An error occurred while attempting to delete.", "error");
+                    console.warn("Cloud delete failed due to permissions. Performing offline local storage delete.", error);
+                    items = items.filter(i => i.id !== id);
+                    saveLocalDataBackup();
+                    renderCatalog();
+                    updateStatsCounters();
+                    showToast("Resource removed offline (Local Storage).", "info");
                 }
             }
         };
@@ -1173,7 +1198,7 @@
                 cover: document.getElementById('form-cover').value.trim(),
                 desc: document.getElementById('form-desc').value.trim(),
                 details: document.getElementById('form-details').value.trim(),
-                // Keep the current view score or set starting views to a random premium number so newly added cards don't look completely unvisited
+                // Keep current view score or set starting views to a random premium number
                 views: existingItem ? (existingItem.views || 0) : Math.floor(Math.random() * 45) + 5
             };
 
@@ -1190,31 +1215,35 @@
                         showToast("New material uploaded to cloud database successfully.", "success");
                     }
                 } else {
-                    if (itemId) {
-                        const idx = items.findIndex(i => i.id === itemId);
-                        if (idx !== -1) {
-                            items[idx] = { ...items[idx], ...itemData };
-                        }
-                        showToast("Local storage updated successfully.", "success");
-                    } else {
-                        const newItem = {
-                            id: 'local-' + Date.now(),
-                            ...itemData
-                        };
-                        items.unshift(newItem);
-                        showToast("New local material added successfully.", "success");
-                    }
-                    saveLocalDataBackup();
-                    renderCatalog();
-                    updateStatsCounters();
+                    saveFallbackToLocal(itemId, itemData);
                 }
-
                 closeAddEditModal();
             } catch (err) {
-                console.error("Save error:", err);
-                showToast("An error occurred while saving the resource.", "error");
+                console.warn("Cloud save failed. Falling back to offline Local Storage database.", err);
+                saveFallbackToLocal(itemId, itemData);
+                closeAddEditModal();
             }
         };
+
+        function saveFallbackToLocal(itemId, itemData) {
+            if (itemId) {
+                const idx = items.findIndex(i => i.id === itemId);
+                if (idx !== -1) {
+                    items[idx] = { ...items[idx], ...itemData };
+                }
+                showToast("Local storage updated successfully.", "success");
+            } else {
+                const newItem = {
+                    id: 'local-' + Date.now(),
+                    ...itemData
+                };
+                items.unshift(newItem);
+                showToast("New local material added successfully.", "success");
+            }
+            saveLocalDataBackup();
+            renderCatalog();
+            updateStatsCounters();
+        }
 
         window.openLoginModal = function() {
             document.getElementById('login-modal').classList.remove('hidden');
